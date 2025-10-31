@@ -186,7 +186,3 @@ pandas==2.1.3
 
 Educational project for ICT course
 BDA-2508
-
----
-
-**Made with ❤️ for learning web development**
