@@ -1,287 +1,244 @@
-import streamlit as st
-import requests
-import pandas as pd
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from passlib.context import CryptContext
+import os
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Configuration
-API_URL = "http://localhost:8000"
+# Load environment variables
+load_dotenv()
 
-# Page setup
-st.set_page_config(page_title="Bank App", page_icon="🏦", layout="wide")
+app = FastAPI(title="Bank API")
 
-# Session initialization
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.user_id = None
-    st.session_state.username = None
+# CORS settings
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Styles
-st.markdown("""
-<style>
-    .big-font {
-        font-size:30px !important;
-        font-weight: bold;
-    }
-    .success-box {
-        padding: 10px;
-        background-color: #d4edda;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    .error-box {
-        padding: 10px;
-        background-color: #f8d7da;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Security
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def register_user(username, password, full_name):
+# PostgreSQL connection
+def get_db():
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        database=os.getenv("DB_NAME", "bank_db"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", "root"),
+        cursor_factory=RealDictCursor
+    )
     try:
-        response = requests.post(f"{API_URL}/register", json={
-            "username": username,
-            "password": password,
-            "full_name": full_name
-        })
-        return response.json()
-    except Exception as e:
-        return {"error": str(e)}
+        yield conn
+    finally:
+        conn.close()
 
-def login_user(username, password):
-    try:
-        response = requests.post(f"{API_URL}/login", json={
-            "username": username,
-            "password": password
-        })
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": response.json().get("detail", "Login failed")}
-    except Exception as e:
-        return {"error": str(e)}
+# Initialize database
+def init_db():
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        database=os.getenv("DB_NAME", "bank_db"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", "root")
+    )
+    cur = conn.cursor()
 
-def get_accounts(user_id):
-    try:
-        response = requests.get(f"{API_URL}/accounts/{user_id}")
-        return response.json()
-    except Exception as e:
-        return {"accounts": []}
-
-def get_transactions(account_id):
-    try:
-        response = requests.get(f"{API_URL}/transactions/{account_id}")
-        return response.json()
-    except Exception as e:
-        return {"transactions": []}
-
-def create_transaction(account_id, trans_type, amount, description):
-    try:
-        response = requests.post(f"{API_URL}/transaction", json={
-            "account_id": account_id,
-            "transaction_type": trans_type,
-            "amount": amount,
-            "description": description
-        })
-        return response.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-def transfer_money(from_account, to_account, amount, description):
-    try:
-        response = requests.post(f"{API_URL}/transfer", json={
-            "from_account": from_account,
-            "to_account": to_account,
-            "amount": amount,
-            "description": description
-        })
-        return response.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-# Main logic
-def main():
-    if not st.session_state.logged_in:
-        # Login/Register Page
-        st.markdown('<p class="big-font">🏦 Welcome to Bank App</p>', unsafe_allow_html=True)
-        
-        tab1, tab2 = st.tabs(["Login", "Register"])
-        
-        with tab1:
-            st.subheader("Sign in")
-            login_username = st.text_input("Username", key="login_user")
-            login_password = st.text_input("Password", type="password", key="login_pass")
-            
-            if st.button("Login", type="primary"):
-                if login_username and login_password:
-                    result = login_user(login_username, login_password)
-                    if "error" in result:
-                        st.error(f"❌ {result['error']}")
-                    else:
-                        st.session_state.logged_in = True
-                        st.session_state.user_id = result['user_id']
-                        st.session_state.username = result['username']
-                        st.rerun()
-                else:
-                    st.warning("⚠️ Please fill in all fields")
-        
-        with tab2:
-            st.subheader("Create an account")
-            reg_username = st.text_input("Username", key="reg_user")
-            reg_password = st.text_input("Password", type="password", key="reg_pass")
-            reg_fullname = st.text_input("Full name", key="reg_name")
-            
-            if st.button("Register", type="primary"):
-                if reg_username and reg_password and reg_fullname:
-                    result = register_user(reg_username, reg_password, reg_fullname)
-                    if "error" in result:
-                        st.error(f"❌ {result.get('detail', result['error'])}")
-                    else:
-                        st.success(f"✅ {result['message']}")
-                        st.info(f"📋 Your account number: **{result['account_number']}**")
-                        st.balloons()
-                else:
-                    st.warning("⚠️ Please fill in all fields")
-    
-    else:
-        # Main Page
-        st.sidebar.markdown(f"### 👤 {st.session_state.username}")
-        if st.sidebar.button("🚪 Logout"):
-            st.session_state.logged_in = False
-            st.session_state.user_id = None
-            st.session_state.username = None
-            st.rerun()
-        
-        st.title("🏦 Banking System")
-        
-        # Get accounts
-        accounts_data = get_accounts(st.session_state.user_id)
-        accounts = accounts_data.get('accounts', [])
-        
-        if not accounts:
-            st.warning("You have no accounts yet")
-            return
-        
-        # Select account
-        selected_account = st.selectbox(
-            "Select account",
-            accounts,
-            format_func=lambda x: f"{x['account_number']} - Balance: {float(x['balance']):.2f} ₸"
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(50) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            full_name VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        
-        # Show balance
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("💰 Balance", f"{float(selected_account['balance']):.2f} ₸")
-        with col2:
-            st.metric("🔢 Account number", selected_account['account_number'])
-        with col3:
-            st.metric("📅 Account type", selected_account['account_type'])
-        
-        st.divider()
-        
-        # Tabs
-        tab1, tab2, tab3 = st.tabs(["💳 Transactions", "💸 Transfer", "📊 History"])
-        
-        with tab1:
-            st.subheader("Deposit & Withdraw")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("### Deposit money")
-                deposit_amount = st.number_input("Deposit amount", min_value=0.0, step=100.0, key="deposit")
-                deposit_desc = st.text_input("Description", key="deposit_desc")
-                if st.button("Deposit", type="primary"):
-                    if deposit_amount > 0:
-                        result = create_transaction(
-                            selected_account['id'], 
-                            'deposit', 
-                            deposit_amount, 
-                            deposit_desc
-                        )
-                        if "error" in result:
-                            st.error(f"❌ {result['error']}")
-                        else:
-                            st.success(f"✅ Deposit successful! New balance: {result['new_balance']:.2f} ₸")
-                            st.rerun()
-                    else:
-                        st.warning("⚠️ Enter a valid amount")
-            
-            with col2:
-                st.write("### Withdraw money")
-                withdraw_amount = st.number_input("Withdrawal amount", min_value=0.0, step=100.0, key="withdraw")
-                withdraw_desc = st.text_input("Description", key="withdraw_desc")
-                if st.button("Withdraw", type="primary"):
-                    if withdraw_amount > 0:
-                        result = create_transaction(
-                            selected_account['id'], 
-                            'withdrawal', 
-                            withdraw_amount, 
-                            withdraw_desc
-                        )
-                        if "error" in result:
-                            st.error(f"❌ {result.get('detail', result['error'])}")
-                        else:
-                            st.success(f"✅ Withdrawal successful! New balance: {result['new_balance']:.2f} ₸")
-                            st.rerun()
-                    else:
-                        st.warning("⚠️ Enter a valid amount")
-        
-        with tab2:
-            st.subheader("Money transfer")
-            to_account = st.text_input("Recipient account number")
-            transfer_amount = st.number_input("Transfer amount", min_value=0.0, step=100.0)
-            transfer_desc = st.text_input("Transfer description")
-            
-            if st.button("Transfer", type="primary"):
-                if to_account and transfer_amount > 0:
-                    result = transfer_money(
-                        selected_account['account_number'],
-                        to_account,
-                        transfer_amount,
-                        transfer_desc
-                    )
-                    if "error" in result:
-                        st.error(f"❌ {result.get('detail', result['error'])}")
-                    else:
-                        st.success(f"✅ {result['message']}")
-                        st.balloons()
-                        st.rerun()
-                else:
-                    st.warning("⚠️ Please fill in all fields")
-        
-        with tab3:
-            st.subheader("Transaction history")
-            trans_data = get_transactions(selected_account['id'])
-            transactions = trans_data.get('transactions', [])
-            
-            if transactions:
-                df = pd.DataFrame(transactions)
-                df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
-                df['amount'] = df['amount'].astype(float).round(2)
-                
-                type_map = {
-                    'deposit': '📥 Deposit',
-                    'withdrawal': '📤 Withdrawal',
-                    'transfer_in': '⬅️ Incoming transfer',
-                    'transfer_out': '➡️ Outgoing transfer'
-                }
-                df['transaction_type'] = df['transaction_type'].map(type_map)
-                
-                st.dataframe(
-                    df[['created_at', 'transaction_type', 'amount', 'description']],
-                    column_config={
-                        "created_at": "Date",
-                        "transaction_type": "Type",
-                        "amount": st.column_config.NumberColumn("Amount (₸)", format="%.2f"),
-                        "description": "Description"
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
-            else:
-                st.info("📭 No transactions yet")
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            account_number VARCHAR(20) UNIQUE NOT NULL,
+            balance DECIMAL(15, 2) DEFAULT 0.00,
+            account_type VARCHAR(20) DEFAULT 'savings',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id SERIAL PRIMARY KEY,
+            account_id INTEGER REFERENCES accounts(id),
+            transaction_type VARCHAR(20) NOT NULL,
+            amount DECIMAL(15, 2) NOT NULL,
+            description VARCHAR(255),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# Pydantic models
+class UserRegister(BaseModel):
+    username: str
+    password: str
+    full_name: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class Transaction(BaseModel):
+    account_id: int
+    transaction_type: str
+    amount: float
+    description: Optional[str] = None
+
+class Transfer(BaseModel):
+    from_account: str
+    to_account: str
+    amount: float
+    description: Optional[str] = None
+
+# API endpoints
+@app.on_event("startup")
+async def startup():
+    init_db()
+
+@app.get("/")
+def root():
+    return {"message": "Bank API is running!"}
+
+@app.post("/register")
+def register(user: UserRegister, conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM users WHERE username = %s", (user.username,))
+    if cur.fetchone():
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    password_hash = pwd_context.hash(user.password)
+    cur.execute(
+        "INSERT INTO users (username, password_hash, full_name) VALUES (%s, %s, %s) RETURNING id",
+        (user.username, password_hash, user.full_name)
+    )
+    user_id = cur.fetchone()['id']
+
+    import random
+    account_number = f"KZ{random.randint(1000000000000000, 9999999999999999)}"
+    cur.execute(
+        "INSERT INTO accounts (user_id, account_number, balance) VALUES (%s, %s, %s)",
+        (user_id, account_number, 1000.00)
+    )
+
+    conn.commit()
+    cur.close()
+
+    return {"message": "Registration successful", "account_number": account_number}
+
+@app.post("/login")
+def login(user: UserLogin, conn=Depends(get_db)):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE username = %s", (user.username,))
+    db_user = cur.fetchone()
+
+    if not db_user or not pwd_context.verify(user.password, db_user['password_hash']):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    cur.close()
+    return {"message": "Login successful", "user_id": db_user['id'], "username": db_user['username']}
+
+@app.get("/accounts/{user_id}")
+def get_accounts(user_id: int, conn=Depends(get_db)):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM accounts WHERE user_id = %s", (user_id,))
+    accounts = cur.fetchall()
+    cur.close()
+    return {"accounts": accounts}
+
+@app.get("/transactions/{account_id}")
+def get_transactions(account_id: int, conn=Depends(get_db)):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM transactions WHERE account_id = %s ORDER BY created_at DESC LIMIT 50",
+        (account_id,)
+    )
+    transactions = cur.fetchall()
+    cur.close()
+    return {"transactions": transactions}
+
+@app.post("/transaction")
+def create_transaction(trans: Transaction, conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    cur.execute("SELECT balance FROM accounts WHERE id = %s", (trans.account_id,))
+    account = cur.fetchone()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    current_balance = float(account['balance'])
+
+    if trans.transaction_type == 'withdrawal' and current_balance < trans.amount:
+        raise HTTPException(status_code=400, detail="Insufficient funds")
+
+    new_balance = current_balance + trans.amount if trans.transaction_type == 'deposit' else current_balance - trans.amount
+    cur.execute("UPDATE accounts SET balance = %s WHERE id = %s", (new_balance, trans.account_id))
+
+    cur.execute(
+        "INSERT INTO transactions (account_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s)",
+        (trans.account_id, trans.transaction_type, trans.amount, trans.description)
+    )
+
+    conn.commit()
+    cur.close()
+    return {"message": "Transaction successful", "new_balance": new_balance}
+
+@app.post("/transfer")
+def transfer(trans: Transfer, conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM accounts WHERE account_number = %s", (trans.from_account,))
+    from_acc = cur.fetchone()
+
+    cur.execute("SELECT * FROM accounts WHERE account_number = %s", (trans.to_account,))
+    to_acc = cur.fetchone()
+
+    if not from_acc or not to_acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if float(from_acc['balance']) < trans.amount:
+        raise HTTPException(status_code=400, detail="Insufficient funds")
+
+    cur.execute(
+        "UPDATE accounts SET balance = balance - %s WHERE id = %s",
+        (trans.amount, from_acc['id'])
+    )
+    cur.execute(
+        "INSERT INTO transactions (account_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s)",
+        (from_acc['id'], 'transfer_out', trans.amount, f"Transfer to {trans.to_account}")
+    )
+
+    cur.execute(
+        "UPDATE accounts SET balance = balance + %s WHERE id = %s",
+        (trans.amount, to_acc['id'])
+    )
+    cur.execute(
+        "INSERT INTO transactions (account_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s)",
+        (to_acc['id'], 'transfer_in', trans.amount, f"Transfer from {trans.from_account}")
+    )
+
+    conn.commit()
+    cur.close()
+    return {"message": "Transfer completed successfully"}
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
